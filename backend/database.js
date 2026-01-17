@@ -22,6 +22,17 @@ const User = sequelize.define('User', {
     defaultValue: () => uuidv4(),
     primaryKey: true,
   },
+  username: {
+    type: Sequelize.STRING(50),
+    allowNull: false,
+    unique: true,
+    comment: 'Unique username for authentication',
+  },
+  password: {
+    type: Sequelize.STRING(255),
+    allowNull: false,
+    comment: 'Bcrypt hashed password',
+  },
   name: {
     type: Sequelize.STRING(100),
     allowNull: false,
@@ -130,6 +141,46 @@ const GroupMember = sequelize.define('GroupMember', {
   },
 }, {
   tableName: 'group_members',
+  timestamps: false,
+});
+
+// ============================================
+// FRIENDSHIP MODEL
+// ============================================
+const Friendship = sequelize.define('Friendship', {
+  id: {
+    type: Sequelize.UUID,
+    defaultValue: () => uuidv4(),
+    primaryKey: true,
+  },
+  userId: {
+    type: Sequelize.UUID,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'id',
+    },
+  },
+  friendId: {
+    type: Sequelize.UUID,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'id',
+    },
+  },
+  status: {
+    type: Sequelize.ENUM('following', 'mutual'),
+    defaultValue: 'following',
+    allowNull: false,
+    comment: 'following = one-way, mutual = both follow each other',
+  },
+  createdAt: {
+    type: Sequelize.DATE,
+    defaultValue: Sequelize.NOW,
+  },
+}, {
+  tableName: 'friendships',
   timestamps: false,
 });
 
@@ -338,6 +389,12 @@ GroupMember.belongsTo(User, { foreignKey: 'userId' });
 Group.hasMany(GroupMember, { foreignKey: 'groupId', as: 'groupMembers' });
 GroupMember.belongsTo(Group, { foreignKey: 'groupId' });
 
+// User - Friendship relationships (one-way and mutual follows)
+User.hasMany(Friendship, { foreignKey: 'userId', as: 'following' });
+User.hasMany(Friendship, { foreignKey: 'friendId', as: 'followers' });
+Friendship.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+Friendship.belongsTo(User, { foreignKey: 'friendId', as: 'friend' });
+
 // User - Bet relationships
 User.hasMany(Bet, { foreignKey: 'createdBy', as: 'createdBets' });
 Bet.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
@@ -379,4 +436,4 @@ export const initializeDatabase = async () => {
   }
 };
 
-export { sequelize, User, Group, GroupMember, Bet, Outcome, Entry };
+export { sequelize, User, Group, GroupMember, Friendship, Bet, Outcome, Entry };

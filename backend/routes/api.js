@@ -1,9 +1,11 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import bcrypt from 'bcrypt';
 import {
   User,
   Group,
   GroupMember,
+  Friendship,
   Bet,
   Outcome,
   Entry,
@@ -11,6 +13,108 @@ import {
 } from '../database.js';
 
 const router = express.Router();
+
+// ============================================
+// AUTHENTICATION ROUTES
+// ============================================
+
+/**
+ * POST /api/auth/signup
+ * Create a new user account
+ * Body: { username, password, name, emoji }
+ */
+router.post('/auth/signup', async (req, res, next) => {
+  try {
+    const { username, password, name, emoji } = req.body;
+
+    // Validation
+    if (!username || !password || !name || !emoji) {
+      return res.status(400).json({
+        error: 'username, password, name, and emoji are required',
+      });
+    }
+
+    if (username.length < 3) {
+      return res.status(400).json({
+        error: 'username must be at least 3 characters',
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        error: 'password must be at least 6 characters',
+      });
+    }
+
+    // Check if username already exists
+    const existingUser = await User.findOne({ where: { username } });
+    if (existingUser) {
+      return res.status(409).json({
+        error: 'username already taken',
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const user = await User.create({
+      id: uuidv4(),
+      username,
+      password: hashedPassword,
+      name,
+      emoji,
+      wins: 0,
+      losses: 0,
+      streak: 0,
+    });
+
+    // Return user without password
+    const { password: _, ...userWithoutPassword } = user.toJSON();
+    res.status(201).json(userWithoutPassword);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/auth/login
+ * Login with username and password
+ * Body: { username, password }
+ */
+router.post('/auth/login', async (req, res, next) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({
+        error: 'username and password are required',
+      });
+    }
+
+    // Find user by username
+    const user = await User.findOne({ where: { username } });
+    if (!user) {
+      return res.status(401).json({
+        error: 'invalid username or password',
+      });
+    }
+
+    // Compare passwords
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
+      return res.status(401).json({
+        error: 'invalid username or password',
+      });
+    }
+
+    // Return user without password
+    const { password: _, ...userWithoutPassword } = user.toJSON();
+    res.json(userWithoutPassword);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ============================================
 // USERS ROUTES
@@ -892,6 +996,330 @@ router.get('/entries/:userId', async (req, res, next) => {
     });
 
     res.json(entries);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================
+// FRIENDSHIP ROUTES
+// ============================================
+
+/**
+ * POST /api/friends/add
+ * Create a 'Following' relationship
+ * Body: { userId, friendId }
+ */
+router.post('/friends/add', async (req, res, next) => {
+  try {
+    const { userId, friendId } = req.body;
+
+    if (!userId || !friendId) {
+      return res.status(400).json({
+        error: 'userId and friendId are required',
+      });
+    }
+
+    if (userId === friendId) {
+      return res.status(400).json({
+        error: 'cannot follow yourself',
+      });
+    }
+
+    // Check if both users exist
+    const user = await User.findByPk(userId);
+    const friend = await User.findByPk(friendId);
+
+    if (!user || !friend) {
+      return res.status(404).json({
+        error: 'one or both users not found',
+      });
+    }
+
+    // Check if relationship already exists
+    const existing = await Friendship.findOne({
+      where: { userId, friendId },
+    });
+
+    if (existing) {
+      return res.status(409).json({
+        error: 'friendship relationship already exists',
+      });
+    }
+
+    // Create friendship (following status)
+    const friendship = await Friendship.create({
+      id: uuidv4(),
+      userId,
+      friendId,
+      status: 'following',
+    });
+
+    res.status(201).json(friendship);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/friends/accept
+ * Update relationship to 'Mutual'
+ * Body: { userId, friendId }
+ */
+router.post('/friends/accept', async (req, res, next) => {
+  try {
+    const { userId, friendId } = req.body;
+
+    if (!userId || !friendId) {
+      return res.status(400).json({
+        error: 'userId and friendId are required',
+      });
+    }
+
+    // Find the friendship where friendId is following userId
+    const friendship = await Friendship.findOne({
+      where: { userId: friendId, friendId: userId },
+    });
+
+    if (!friendship) {
+      return res.status(404).json({
+        error: 'friendship request not found',
+      });
+    }
+
+    // Update to mutual
+    friendship.status = 'mutual';
+    await friendship.save();
+
+    // Also create reverse mutual relationship if it doesn't exist
+    const reverseRelationship = await Friendship.findOne({
+      where: { userId, friendId },
+    });
+
+    if (!reverseRelationship) {
+      await Friendship.create({
+        id: uuidv4(),
+        userId,
+        friendId,
+        status: 'mutual',
+      });
+    } else {
+      reverseRelationship.status = 'mutual';
+      await reverseRelationship.save();
+    }
+
+    res.json(friendship);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/friends/list/:userId
+ * Return a list of mutual friends and followed users
+ */
+router.get('/friends/list/:userId', async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+
+    // Check if user exists
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({
+        error: 'user not found',
+      });
+    }
+
+    // Get all relationships where this user is following others
+    const following = await Friendship.findAll({
+      where: { userId },
+      include: [
+        {
+          model: User,
+          as: 'friend',
+          attributes: { exclude: ['password'] },
+        },
+      ],
+    });
+
+    // Get all relationships where others are following this user
+    const followers = await Friendship.findAll({
+      where: { friendId: userId },
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: { exclude: ['password'] },
+        },
+      ],
+    });
+
+    // Format response
+    const following_list = following.map((f) => ({
+      id: f.id,
+      user: f.friend,
+      status: f.status,
+      createdAt: f.createdAt,
+    }));
+
+    const followers_list = followers.map((f) => ({
+      id: f.id,
+      user: f.user,
+      status: f.status,
+      createdAt: f.createdAt,
+    }));
+
+    // Get mutual friends (both following each other)
+    const mutual = following_list.filter((fItem) =>
+      followers_list.some((follower) => follower.user.id === fItem.user.id)
+    );
+
+    res.json({
+      userId,
+      following: following_list,
+      followers: followers_list,
+      mutual: mutual,
+      mutualCount: mutual.length,
+      followingCount: following_list.length,
+      followersCount: followers_list.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/friends/:id
+ * Delete a friendship relationship
+ */
+router.delete('/friends/:id', async (req, res, next) => {
+  try {
+    const friendship = await Friendship.findByPk(req.params.id);
+
+    if (!friendship) {
+      return res.status(404).json({
+        error: 'friendship not found',
+      });
+    }
+
+    await friendship.destroy();
+    res.json({ message: 'friendship deleted' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================
+// FEED ROUTES
+// ============================================
+
+/**
+ * GET /api/feed/:userId
+ * Fetch all active Bets from:
+ * 1. Circles the user belongs to
+ * 2. Public bets from users they follow
+ * 
+ * Returns bets sorted by deadline (soonest first)
+ */
+router.get('/feed/:userId', async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+
+    // Check if user exists
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({
+        error: 'user not found',
+      });
+    }
+
+    // Get all groups the user belongs to
+    const userGroups = await GroupMember.findAll({
+      where: { userId },
+      attributes: ['groupId'],
+    });
+
+    const groupIds = userGroups.map((gm) => gm.groupId);
+
+    // Get all users that this user is following
+    const following = await Friendship.findAll({
+      where: { userId },
+      attributes: ['friendId'],
+    });
+
+    const followingUserIds = following.map((f) => f.friendId);
+
+    // Query 1: Get active bets from user's circles
+    const circleBets = await Bet.findAll({
+      where: {
+        groupId: groupIds.length > 0 ? groupIds : null,
+        status: 'open',
+      },
+      include: [
+        {
+          model: Outcome,
+          as: 'outcomes',
+        },
+        {
+          model: User,
+          as: 'creator',
+          attributes: { exclude: ['password'] },
+        },
+        {
+          model: Group,
+          attributes: ['id', 'name', 'inviteCode'],
+        },
+      ],
+      order: [['deadline', 'ASC']],
+    });
+
+    // Query 2: Get active public bets from users they follow
+    // For now, we'll consider all bets as potentially public
+    // In a production app, you'd add a "public" boolean field
+    const followingBets = followingUserIds.length > 0
+      ? await Bet.findAll({
+          where: {
+            createdBy: followingUserIds,
+            status: 'open',
+          },
+          include: [
+            {
+              model: Outcome,
+              as: 'outcomes',
+            },
+            {
+              model: User,
+              as: 'creator',
+              attributes: { exclude: ['password'] },
+            },
+            {
+              model: Group,
+              attributes: ['id', 'name', 'inviteCode'],
+            },
+          ],
+          order: [['deadline', 'ASC']],
+        })
+      : [];
+
+    // Combine and deduplicate bets (in case a followed user is in the same circle)
+    const betMap = new Map();
+    [...circleBets, ...followingBets].forEach((bet) => {
+      if (!betMap.has(bet.id)) {
+        betMap.set(bet.id, bet);
+      }
+    });
+
+    const allBets = Array.from(betMap.values()).sort(
+      (a, b) => new Date(a.deadline) - new Date(b.deadline)
+    );
+
+    res.json({
+      userId,
+      betCount: allBets.length,
+      circleCount: groupIds.length,
+      followingCount: followingUserIds.length,
+      bets: allBets,
+    });
   } catch (error) {
     next(error);
   }
