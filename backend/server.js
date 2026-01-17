@@ -66,7 +66,7 @@ const startServer = async () => {
     await initializeDatabase();
     
     // Start Express server
-    app.listen(PORT, () => {
+    app.listen(PORT, 'localhost', () => {
       console.log(`✅ Server running on http://localhost:${PORT}`);
       console.log(`📊 API Health: http://localhost:${PORT}/api/health`);
       console.log(`💾 Database: ./data/betting_app.db`);

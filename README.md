@@ -4,21 +4,48 @@ A full-stack application where friends make predictions and face fun consequence
 
 ## 🚀 Quick Start
 
-### Backend Setup
+### Option 1: Start Both Servers (Recommended)
+```bash
+# Make the script executable (first time only)
+chmod +x start.sh
+
+# Run both servers
+./start.sh
+```
+
+### Option 2: Start Servers Separately
+
+**Backend Setup (Terminal 1):**
 ```bash
 cd backend
-npm install
-node server.js
+npm install  # Only needed first time
+npm start
+# or: node server.js
 ```
 Server runs at `http://localhost:3001`
 
-### Frontend Setup (In another terminal)
+**Frontend Setup (Terminal 2):**
 ```bash
 cd my-react-router-app
-npm install
+npm install  # Only needed first time
 npm run dev
 ```
 Frontend runs at `http://localhost:5173`
+
+### Troubleshooting
+
+**Port already in use?**
+- Backend: Change `PORT` in `backend/server.js` or set `PORT=3002 npm start`
+- Frontend: React Router will automatically use the next available port
+
+**Permission denied?**
+- Make sure you have Node.js installed: `node --version`
+- Try running with `npm start` instead of `node server.js`
+
+**Can't connect to localhost?**
+- Make sure both servers are running
+- Check that the backend is running on port 3001
+- Check browser console for CORS errors
 
 ---
 
