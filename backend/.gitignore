@@ -1,0 +1,6 @@
+node_modules/
+data/betting_app.db
+.env
+.env.local
+.DS_Store
+*.log
